@@ -1,0 +1,60 @@
+using System.IO;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.WebJobs;
+using Microsoft.Azure.WebJobs.Extensions.Http;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading.Tasks;
+
+public static class CheckAndReplenishQueue
+{
+    private static readonly string databricksInstance = "https://<your-databricks-instance>";
+    private static readonly string databricksToken = "<your-databricks-token>";
+
+    [FunctionName("CheckAndReplenishQueue")]
+    public static async Task<IActionResult> Run(
+        [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] HttpRequest req,
+        ILogger log)
+    {
+        log.LogInformation("C# HTTP trigger function processed a request.");
+
+        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
+        dynamic data = JsonConvert.DeserializeObject(requestBody);
+        string item = data?.item;
+
+        var response = await SubmitDatabricksJob(item);
+
+        return new OkObjectResult(response);
+    }
+
+    private static async Task<string> SubmitDatabricksJob(string item)
+    {
+        var jobConfig = new
+        {
+            run_name = "Data Processing Job",
+            existing_cluster_id = "<your-cluster-id>",
+            notebook_task = new
+            {
+                notebook_path = "<path-to-your-notebook>",
+                base_parameters = new
+                {
+                    item = item
+                }
+            }
+        };
+
+        using (var client = new HttpClient())
+        {
+            client.BaseAddress = new System.Uri(databricksInstance);
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", databricksToken);
+
+            var content = new StringContent(JsonConvert.SerializeObject(jobConfig), System.Text.Encoding.UTF8, "application/json");
+            var response = await client.PostAsync("/api/2.0/jobs/runs/submit", content);
+
+            return await response.Content.ReadAsStringAsync();
+        }
+    }
+}
